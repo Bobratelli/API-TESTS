@@ -1,5 +1,9 @@
 import pytest
+import random
 from sqlalchemy import text
+from sqlalchemy.orm import Session
+from src.main.api.models.transaction_models import CreditRequest, DepositRequest
+from src.main.api.db.crud.account_crud_db import AccountCrudDb
 from src.main.api.db.models.engine import engine, SessionLocal
 from src.main.api.classes.app_manager import AppManager
 from src.main.api.models.user_models import CreateUserRequest, CreateUserResponse
@@ -29,7 +33,6 @@ def api_manager(created_object):
 
 @pytest.fixture
 def create_user_request(api_manager):
-    # Генерируем уникальные данные и создаем пользователя (сохраняется в created_object)
     user_data = RandomModelGenerator.generate(CreateUserRequest)
     request_model = CreateUserRequest(**user_data)
     api_manager.admin.create_user(request_model)
@@ -61,21 +64,54 @@ def create_account(api_manager, create_user_request):
 
 @pytest.fixture
 def create_credit_user(api_manager):
-    # 1. Генерируем и создаем пользователя (с ролью ROLE_USER)
     user_data = RandomModelGenerator.generate(CreateUserRequest)
     request_model = CreateUserRequest(**user_data)
     api_manager.admin.create_user(request_model)
 
-    # 2. Открываем НОВУЮ сессию, чтобы изменения увидел API-сервер
     db = SessionLocal()
     try:
         db.execute(
             text('UPDATE "user" SET role = :role WHERE username = :username'),
-            # Используем ROLE_CREDIT_SECRET из вашего файла требований!
             {"role": "ROLE_CREDIT_SECRET", "username": request_model.username}
         )
-        db.commit()  # Фиксируем изменения навсегда (до очистки в teardown)
+        db.commit()
     finally:
         db.close()
 
     return request_model
+
+
+@pytest.fixture
+def deposited_account(api_manager, create_user_request, create_account):
+    """Создает счет и пополняет его на случайную сумму (1000 - 9000)"""
+    amount = random.randint(1000, 9000)
+    deposit_model = DepositRequest(account_id=create_account.id, amount=float(amount))
+    api_manager.user.deposit(create_user_request, deposit_model)
+    return create_account, float(amount)
+
+
+@pytest.fixture
+def two_accounts_with_deposit(api_manager, create_user_request, deposited_account):
+    """Возвращает два счета: первый (уже пополненный) и второй (пустой)"""
+    first_account, balance = deposited_account
+    second_account = api_manager.user.create_account(create_user_request)
+    return first_account, second_account, balance
+
+
+@pytest.fixture
+def credit_issued(api_manager, create_credit_user):
+    """
+    Предусловие для тестов погашения:
+    Создает кредитному юзеру счет и сразу оформляет на него кредит.
+    Возвращает кортеж: (аккаунт, ID кредита, сумма кредита)
+    """
+    account = api_manager.user.create_account(create_credit_user)
+    amount = float(random.randint(5000, 15000))
+
+    credit_model = CreditRequest(
+        account_id=account.id,
+        amount=amount,
+        term_months=12
+    )
+    response = api_manager.user.request_credit(create_credit_user, credit_model)
+    return account, response.credit_id, amount
