@@ -9,6 +9,9 @@ from src.main.api.classes.app_manager import AppManager
 from src.main.api.models.user_models import CreateUserRequest, CreateUserResponse
 from src.main.api.steps.admin_steps import AdminSteps
 from src.main.api.generators.model_generator import RandomModelGenerator
+from src.main.api.models.transaction_models import (
+    DepositRequest, TransferRequest, CreditRequest, CreditRepayRequest
+)
 
 
 @pytest.fixture
@@ -115,3 +118,87 @@ def credit_issued(api_manager, create_credit_user):
     )
     response = api_manager.user.request_credit(create_credit_user, credit_model)
     return account, response.credit_id, amount
+
+
+@pytest.fixture
+def valid_deposit_data(api_manager, create_user_request, create_account):
+    amount = float(random.randint(1000, 9000))
+    model = DepositRequest(account_id=create_account.id, amount=amount)
+    return model, amount
+
+
+@pytest.fixture
+def invalid_deposit_data():
+    invalid_id = random.randint(100000, 999999)
+    amount = float(random.randint(1000, 9000))
+    return DepositRequest(account_id=invalid_id, amount=amount)
+
+
+@pytest.fixture
+def valid_transfer_data(two_accounts_with_deposit):
+    acc_from, acc_to, initial_balance = two_accounts_with_deposit
+    max_transfer = min(10000, int(initial_balance))
+    amount = float(random.randint(500, max_transfer))
+
+    model = TransferRequest(
+        from_account_id=acc_from.id,
+        to_account_id=acc_to.id,
+        amount=amount
+    )
+    return model, initial_balance, acc_from, acc_to
+
+
+@pytest.fixture
+def insufficient_transfer_data(api_manager, create_user_request, create_account):
+    acc_to = api_manager.user.create_account(create_user_request)
+    amount = float(random.randint(500, 10000))
+
+    model = TransferRequest(
+        from_account_id=create_account.id,
+        to_account_id=acc_to.id,
+        amount=amount
+    )
+    return model
+
+
+@pytest.fixture
+def valid_credit_data(api_manager, create_credit_user):
+    account = api_manager.user.create_account(create_credit_user)
+    amount = float(random.randint(5000, 15000))
+    model = CreditRequest(account_id=account.id, amount=amount, term_months=12)
+    return model, amount, account
+
+
+@pytest.fixture
+def forbidden_credit_data(api_manager, create_user_request):
+    # Обычный юзер с обычным счетом
+    account = api_manager.user.create_account(create_user_request)
+    amount = float(random.randint(5000, 15000))
+    return CreditRequest(account_id=account.id, amount=amount, term_months=12)
+
+
+@pytest.fixture
+def valid_repay_data(credit_issued):
+    # credit_issued возвращает (account, credit_id, amount)
+    account, credit_id, amount = credit_issued
+    model = CreditRepayRequest(
+        credit_id=credit_id,
+        account_id=account.id,
+        amount=amount
+    )
+    return model, account
+
+
+@pytest.fixture
+def invalid_repay_data(api_manager, create_credit_user):
+    account = api_manager.user.create_account(create_credit_user)
+    amount = 5000.0
+    deposit_model = DepositRequest(account_id=account.id, amount=amount)
+    api_manager.user.deposit(create_credit_user, deposit_model)
+
+    invalid_id = random.randint(100000, 999999)
+    return CreditRepayRequest(
+        credit_id=invalid_id,
+        account_id=account.id,
+        amount=amount
+    )
